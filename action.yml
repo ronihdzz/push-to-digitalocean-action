@@ -7,99 +7,133 @@ inputs:
   digitalocean-repository:
     description: 'DigitalOcean Repository'
     required: true
+  branch-environment-map:
+    description: 'Mapping of branches to environments (JSON format). Default: {"main": "prod", "development": "dev", "staging": "stg", "testing": "tst"}'
+    required: false
+    default: '{"main": "prod", "development": "dev", "staging": "stg", "testing": "tst"}'
+  dockerfile-path:
+    description: 'Path to the Dockerfile for deployment'
+    required: false
+    default: 'deployments/Dockerfile.deploy'
+
 runs:
   using: 'composite'
   steps:
     - name: Set environment variables
       shell: bash
       run: |
-        BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/})
-        echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
-        case "$BRANCH_NAME" in
-          main) echo "ENVIRONMENT=production" >> $GITHUB_ENV ;;
-          development) echo "ENVIRONMENT=development" >> $GITHUB_ENV ;;
-          staging) echo "ENVIRONMENT=staging" >> $GITHUB_ENV ;;
-        esac
-        echo "Set environment variables: ENVIRONMENT=${ENVIRONMENT}, BRANCH_NAME=${BRANCH_NAME}"
+        echo "Setting environment variables..."
+        BRANCH_NAME=$(echo "${GITHUB_REF#refs/heads/}")
+        echo "Determined branch name: $BRANCH_NAME"
+        echo "BRANCH_NAME=$BRANCH_NAME" >> "$GITHUB_ENV"
+        
+        # Parse the branch-environment map input
+        echo "Parsing branch-environment map input..."
+        BRANCH_ENV_MAP='${{ inputs.branch-environment-map }}'
+        TAG_ENVIRONMENT_DOCKER=$(echo "$BRANCH_ENV_MAP" | jq -r --arg branch "$BRANCH_NAME" '.[$branch]')
+        
+        # Mark error if environment is not defined in the input map
+        if [[ "$TAG_ENVIRONMENT_DOCKER" == "null" || -z "$TAG_ENVIRONMENT_DOCKER" ]]; then
+          echo "Error: Branch '$BRANCH_NAME' not found in branch-environment map."
+          exit 1
+        fi
+
+        echo "Determined environment tag: $TAG_ENVIRONMENT_DOCKER"
+        echo "TAG_ENVIRONMENT_DOCKER=$TAG_ENVIRONMENT_DOCKER" >> "$GITHUB_ENV"
+        echo "Set environment variables: TAG_ENVIRONMENT_DOCKER=${TAG_ENVIRONMENT_DOCKER}, BRANCH_NAME=${BRANCH_NAME}"
 
     - name: Debug Environment Variables
       shell: bash
       run: |
-        echo "ENVIRONMENT=${ENVIRONMENT}"
+        echo "Debugging environment variables..."
+        echo "TAG_ENVIRONMENT_DOCKER=${TAG_ENVIRONMENT_DOCKER}"
         echo "BRANCH_NAME=${BRANCH_NAME}"
 
     - name: Login to DigitalOcean Container Registry
       shell: bash
       run: |
-        echo ${{ inputs.digitalocean-token }} | docker login registry.digitalocean.com -u do --password-stdin
+        echo "Logging in to DigitalOcean Container Registry..."
+        echo "${{ inputs.digitalocean-token }}" | docker login registry.digitalocean.com -u do --password-stdin
 
     - name: Set Docker image version
       shell: bash
       run: |
+        echo "Setting Docker image version..."
         DATE_UTC=$(date -u +"%Y%m%dT%H%M%SZ")
-        echo "VERSION=${DATE_UTC}" >> $GITHUB_ENV
+        echo "Determined date UTC: $DATE_UTC"
+        echo "VERSION=${DATE_UTC}" >> "$GITHUB_ENV"
         echo "Set Docker image version to ${DATE_UTC}"
 
     - name: Debug Docker Version
       shell: bash
       run: |
+        echo "Debugging Docker version..."
         echo "VERSION=${VERSION}"
 
     - name: Pull existing images from DigitalOcean
       shell: bash
       run: |
+        echo "Pulling existing images from DigitalOcean..."
         set -e
-        if docker pull registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-latest; then
-          docker tag registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-latest registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-rollback
-          docker push registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-rollback
+        if docker pull registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-latest; then
+          echo "Tagging existing image as rollback..."
+          docker tag registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-latest registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-rollback
+          docker push registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-rollback
         else
-          echo "No existing image to tag as rollback"
+          echo "No existing image to tag as rollback."
         fi
 
     - name: Build Docker image for DigitalOcean
       shell: bash
       run: |
-        IMAGE_NAME="registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-${VERSION}"
-        echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
-        docker build -f deployments/Dockerfile.deploy -t "$IMAGE_NAME" .
-        docker tag "$IMAGE_NAME" "registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-latest"
+        echo "Building Docker image for DigitalOcean..."
+        DOCKERFILE_PATH='${{ inputs.dockerfile-path }}'
+        echo "Using Dockerfile path: $DOCKERFILE_PATH"
+        IMAGE_NAME="registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-${VERSION}"
+        echo "IMAGE_NAME=$IMAGE_NAME" >> "$GITHUB_ENV"
+        docker build -f "$DOCKERFILE_PATH" -t "$IMAGE_NAME" .
+        docker tag "$IMAGE_NAME" "registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-latest"
         echo "Built Docker image: $IMAGE_NAME and tagged as latest"
 
     - name: Debug Build Info
       shell: bash
       run: |
+        echo "Debugging build info..."
         echo "Built image name: $IMAGE_NAME"
         docker images
 
     - name: Run Docker container to test for DigitalOcean
       shell: bash
       run: |
+        echo "Running Docker container to test image..."
         docker run -d --name test_container $IMAGE_NAME
-        echo "Running container to test image: $IMAGE_NAME"
+        echo "Container running. Listing containers..."
         docker ps -a
         docker rm -f test_container
-        echo "Test container removed"
+        echo "Test container removed."
 
     - name: Push Docker image to DigitalOcean
       if: success()
       shell: bash
       run: |
+        echo "Pushing Docker image to DigitalOcean..."
         docker push "$IMAGE_NAME"
         echo "Pushed image: $IMAGE_NAME"
-        docker push "registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-latest"
-        echo "Pushed latest tag: registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-latest"
-        if docker images | grep -q "registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-rollback"; then
-          docker push "registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-rollback"
-          echo "Pushed rollback tag: registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-rollback"
+        docker push "registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-latest"
+        echo "Pushed latest tag: registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-latest"
+        if docker images | grep -q "registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-rollback"; then
+          docker push "registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-rollback"
+          echo "Pushed rollback tag: registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-rollback"
         fi
 
     - name: Debug Info
       shell: bash
       run: |
+        echo "Debugging final info..."
         echo "IMAGE_NAME=${IMAGE_NAME}"
         docker images
-        echo "Login again to DigitalOcean to ensure pushing"
-        echo ${{ inputs.digitalocean-token }} | docker login registry.digitalocean.com -u do --password-stdin
-        echo "Pushing images again for verification"
+        echo "Logging in again to DigitalOcean to ensure pushing..."
+        echo "${{ inputs.digitalocean-token }}" | docker login registry.digitalocean.com -u do --password-stdin
+        echo "Pushing images again for verification..."
         docker push $IMAGE_NAME
-        docker push registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${ENVIRONMENT}-latest
+        docker push registry.digitalocean.com/${{ inputs.digitalocean-repository }}:${TAG_ENVIRONMENT_DOCKER}-latest
