@@ -139,3 +139,78 @@ Below is a step-by-step description of the process that the Action performs:
 ### Debug Info
 - Prints the IMAGE_NAME and lists local images.
 - Performs a second docker login to DigitalOcean and re-uploads the latest and versioned images as a final verification measure.
+
+## 🚀 5. Usage Examples
+
+Here are example configurations for different scenarios.
+
+### Example 1: Production Deployment from main Branch
+
+This example shows how to configure a workflow that builds and publishes an image to the production environment (prod) when pushing to the main branch.
+
+#### Workflow Configuration
+```yaml
+name: Deploy to Production
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Push to DigitalOcean Registry
+        uses: ronihdzz/push-to-digitalocean-action@v2
+        with:
+          digitalocean-token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          digitalocean-repository: ${{ secrets.DO_REGISTRY_REPOSITORY }}
+```
+
+#### Behavior Explanation
+- **Trigger**: The workflow runs on each push to the main branch.
+
+- **Used Inputs**:
+  - `digitalocean-token`: Obtained from repository secrets for secure authentication.
+  - `digitalocean-repository`: Obtained from DO_REGISTRY_REPOSITORY secret to avoid exposing the registry name.
+  - `branch-environment-map` and `dockerfile-path`: Using default values, so the main branch maps to prod and uses the Dockerfile at deployments/Dockerfile.deploy.
+
+- **Result**: The Action will build an image and publish it to the specified DigitalOcean registry. Tags will be created: prod-latest, prod-YYYYMMDDTHHMMSSZ, and if applicable, prod-rollback.
+
+### Example 2: Staging Deployment with Custom Dockerfile and Branch Map
+
+In this scenario, we want to deploy to a staging environment from a release-candidate branch. Additionally, we'll use a specific Dockerfile for this environment.
+
+#### Workflow Configuration
+```yaml
+name: Deploy to Staging
+on:
+  push:
+    branches:
+      - release-candidate
+jobs:
+  build-and-push-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Push to DigitalOcean Registry (Staging)
+        uses: ronihdzz/push-to-digitalocean-action@v2
+        with:
+          digitalocean-token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          digitalocean-repository: ${{ secrets.DO_REGISTRY_REPOSITORY }}
+          dockerfile-path: 'build/staging/Dockerfile'
+          branch-environment-map: '{"release-candidate": "stg"}'
+```
+
+#### Behavior Explanation
+- **Trigger**: The workflow runs on each push to the release-candidate branch.
+
+- **Used Inputs**:
+  - `dockerfile-path`: Default value is overridden to point to build/staging/Dockerfile.
+  - `branch-environment-map`: A custom JSON is provided to map the release-candidate branch to the stg environment.
+
+- **Result**: The Action will use the staging Dockerfile and custom branch map. The image will be published to the DigitalOcean registry with tags: stg-latest, stg-YYYYMMDDTHHMMSSZ, and potentially stg-rollback.

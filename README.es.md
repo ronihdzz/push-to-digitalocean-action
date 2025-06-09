@@ -136,4 +136,79 @@ A continuación se describe el proceso que realiza la Action, paso por paso:
 
 ### Debug Info (Información de depuración)
 - Imprime el IMAGE_NAME y lista las imágenes locales.
-- Realiza un segundo docker login en DigitalOcean y vuelve a subir las imágenes latest y versionada como medida de verificación final. 
+- Realiza un segundo docker login en DigitalOcean y vuelve a subir las imágenes latest y versionada como medida de verificación final.
+
+## 🚀 5. Ejemplos de Uso
+
+Aquí se muestran configuraciones de ejemplo para diferentes escenarios.
+
+### Ejemplo 1: Despliegue en Producción desde la Rama main
+
+Este ejemplo muestra cómo configurar un workflow para que, al hacer un push a la rama main, se construya y publique una imagen en el entorno de producción (prod).
+
+#### Configuración del Workflow
+```yaml
+name: Deploy to Production
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Push to DigitalOcean Registry
+        uses: ronihdzz/push-to-digitalocean-action@v2
+        with:
+          digitalocean-token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          digitalocean-repository: ${{ secrets.DO_REGISTRY_REPOSITORY }}
+```
+
+#### Explicación del Comportamiento
+- **Activador**: El workflow se ejecuta con cada push a la rama main.
+
+- **Inputs Utilizados**:
+  - `digitalocean-token`: Se obtiene de los secrets del repositorio para una autenticación segura.
+  - `digitalocean-repository`: Se obtiene del secret DO_REGISTRY_REPOSITORY para no exponer el nombre del registro.
+  - `branch-environment-map` y `dockerfile-path`: Se utilizan sus valores por defecto, por lo que la rama main se mapea a prod y se usa el Dockerfile en deployments/Dockerfile.deploy.
+
+- **Resultado**: La Action construirá una imagen y la publicará en el registro de DigitalOcean especificado. Se crearán las etiquetas: prod-latest, prod-YYYYMMDDTHHMMSSZ y, si aplica, prod-rollback.
+
+### Ejemplo 2: Despliegue en Staging con un Dockerfile y Mapa de Ramas Personalizado
+
+En este escenario, queremos desplegar en un entorno de staging desde una rama llamada release-candidate. Además, usaremos un Dockerfile específico para este entorno.
+
+#### Configuración del Workflow
+```yaml
+name: Deploy to Staging
+on:
+  push:
+    branches:
+      - release-candidate
+jobs:
+  build-and-push-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Push to DigitalOcean Registry (Staging)
+        uses: ronihdzz/push-to-digitalocean-action@v2
+        with:
+          digitalocean-token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          digitalocean-repository: ${{ secrets.DO_REGISTRY_REPOSITORY }}
+          dockerfile-path: 'build/staging/Dockerfile'
+          branch-environment-map: '{"release-candidate": "stg"}'
+```
+
+#### Explicación del Comportamiento
+- **Activador**: El workflow se ejecuta con cada push a la rama release-candidate.
+
+- **Inputs Utilizados**:
+  - `dockerfile-path`: Se sobrescribe el valor por defecto para apuntar a build/staging/Dockerfile.
+  - `branch-environment-map`: Se proporciona un JSON personalizado para mapear la rama release-candidate al entorno stg.
+
+- **Resultado**: La Action utilizará el Dockerfile de staging y el mapa de ramas personalizado. La imagen se publicará en el registro de DigitalOcean con las etiquetas stg-latest, stg-YYYYMMDDTHHMMSSZ y, potencialmente, stg-rollback. 
