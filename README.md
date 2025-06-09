@@ -1,208 +1,216 @@
-# Push to DigitalOcean GitHub Action
+# Push to DigitalOcean Container Registry Action
 
-## Description
+## Idiomas
 
-This GitHub Action pushes a Docker image to DigitalOcean Container Registry. It handles tagging and versioning of the Docker image based on the branch and environment. It also allows specifying the path to the Dockerfile used for deployment.
+*  [English](README.md)
+*  [Spanish](README.es.md)
 
-## Inputs
+### 📘 1. What does this Action do?
 
-- `digitalocean-token` (required): The DigitalOcean token needed to authenticate and push the Docker image.
-- `digitalocean-repository` (required): The DigitalOcean repository where the Docker image will be pushed.
-- `branch-environment-map` (optional): A JSON-formatted string that maps branch names to environment tags. Default is `{"main": "prod", "development": "dev", "staging": "stg", "testing": "tst"}`.
-- `dockerfile-path` (optional): The path to the Dockerfile for deployment. Default is `deployments/Dockerfile.deploy`.
+This GitHub Action automates the process of building a Docker image and publishing it to the DigitalOcean Container Registry. Its purpose is to standardize continuous deployment (CI/CD) by linking specific Git branches with environment tags within the DigitalOcean registry.
 
-## Environment Variables
+The workflow is as follows:
 
-- `BRANCH_NAME`: The current branch name. This value is automatically obtained from the GitHub Actions context.
-- `TAG_ENVIRONMENT_DOCKER`: The environment tag determined based on the branch name using the provided `branch-environment-map`.
-- `VERSION`: The Docker image version set to the current UTC date and time.
+1. **Determine environment:** Identifies the Git branch that triggered the workflow (e.g., main, development) and maps it to an environment tag (e.g., prod, dev) using a configurable JSON map. If the branch is not found in the map, the Action fails.
 
-## Steps
+2. **Generate unique version:** Creates a unique version tag for the Docker image based on the current UTC date and time (e.g., 20231027T153000Z).
 
-1. **Set environment variables**: Determines the `BRANCH_NAME` and sets the `TAG_ENVIRONMENT_DOCKER` variable based on the branch name using the provided `branch-environment-map`.
-2. **Debug environment variables**: Prints the `TAG_ENVIRONMENT_DOCKER` and `BRANCH_NAME` to the console for debugging purposes.
-3. **Login to DigitalOcean Container Registry**: Authenticates with DigitalOcean Container Registry using the provided token.
-4. **Set Docker image version**: Sets the `VERSION` variable to the current UTC date and time.
-5. **Debug Docker version**: Prints the `VERSION` to the console for debugging purposes.
-6. **Pull existing images from DigitalOcean**: Pulls the existing Docker image for the environment and tags it as `rollback` if it exists.
-7. **Build Docker image for DigitalOcean**: Builds the Docker image using the specified `dockerfile-path` and tags it as the current version and latest.
-8. **Debug build info**: Prints information about the built Docker image.
-9. **Run Docker container to test for DigitalOcean**: Runs a Docker container to test the built image and then removes the test container.
-10. **Push Docker image to DigitalOcean**: Pushes the Docker image to DigitalOcean Container Registry with the current version, latest, and rollback tags if applicable.
-11. **Debug info**: Prints additional debug information and pushes the images again for verification.
+3. **Handle rollback:** Before building, attempts to download the existing :latest image for the corresponding environment from the DigitalOcean registry. If found, it re-tags it as :rollback and uploads it back, thus preserving a previous version for possible rollbacks.
 
+4. **Build and test image:** Builds a new Docker image using the specified Dockerfile. Once built, tags it with the unique version and also as :latest. Performs a quick smoke test by starting a container from the image and immediately removing it to verify its integrity.
 
-## Sequence Diagram
+5. **Publish to DigitalOcean:** If the previous steps are successful, uploads to the DigitalOcean Container Registry the image with its unique version tag, the environment's :latest tag, and the :rollback tag (if created).
+
+This Action is ideal for projects that use a branch-per-environment strategy and need an automated and consistent process for their deployments in the DigitalOcean Container Registry.
+
+### ⚙️ 2. Required Inputs
+
+Below are the input parameters that the Action uses:
+
+| Input name | Required? | Default value | Technical description |
+|------------|-----------|---------------|---------------------|
+| digitalocean-token | ✅ | N/A | The DigitalOcean access token (do_token) with write permissions to authenticate in the Container Registry. |
+| digitalocean-repository | ✅ | N/A | The repository name in your DigitalOcean Container Registry (e.g., my-registry/my-app). |
+| branch-environment-map | ❌ | `{"main": "prod", "development": "dev", "staging": "stg", "testing": "tst"}` | A JSON object that maps Git branch names to environment tags. The key is the branch name and the value is the tag to use. |
+| dockerfile-path | ❌ | deployments/Dockerfile.deploy | The relative path to the Dockerfile that will be used to build the image. |
+
+### 📈 3. Step-by-step Sequence Diagram
+
+The following diagram illustrates the Action's execution flow, from initial configuration to final image publication in DigitalOcean.
 
 ```mermaid
 sequenceDiagram
-    participant GitHub Actions
-    participant DigitalOcean
-    participant Docker Container
+    actor Runner as GitHub Action Runner
+    participant S1 as Set environment variables
+    participant S2 as Login to DigitalOcean Container Registry
+    participant S3 as Set Docker image version
+    participant S4 as Pull existing images from DigitalOcean
+    participant S5 as Build Docker image for DigitalOcean
+    participant S6 as Run Docker container to test for DigitalOcean
+    participant S7 as Push Docker image to DigitalOcean
 
-    GitHub Actions->>GitHub Actions: Set environment variables
-    GitHub Actions->>GitHub Actions: Debug environment variables
-    GitHub Actions->>DigitalOcean: Login to DigitalOcean Container Registry
-    GitHub Actions->>GitHub Actions: Set Docker image version
-    GitHub Actions->>GitHub Actions: Debug Docker version
-    GitHub Actions->>DigitalOcean: Pull existing images
-    GitHub Actions->>GitHub Actions: Build Docker image using specified Dockerfile path
-    GitHub Actions->>GitHub Actions: Debug build info
-    GitHub Actions->>Docker Container: Run Docker container to test
-    Docker Container->>GitHub Actions: Remove test container
-    GitHub Actions->>DigitalOcean: Push Docker image
-    GitHub Actions->>GitHub Actions: Debug info and push images again
+    Runner->>S1: Execute step
+    activate S1
+    S1-->>Runner: Variables (BRANCH_NAME, TAG_ENVIRONMENT_DOCKER) saved
+    deactivate S1
+
+    Runner->>S2: Execute step
+    activate S2
+    S2-->>Runner: Session started in registry.digitalocean.com
+    deactivate S2
+
+    Runner->>S3: Execute step
+    activate S3
+    S3-->>Runner: Version variable (VERSION) saved
+    deactivate S3
+
+    Runner->>S4: Execute step
+    activate S4
+    S4-->>Runner: Previous 'latest' image (if exists) tagged and uploaded as 'rollback'
+    deactivate S4
+
+    Runner->>S5: Execute step
+    activate S5
+    S5-->>Runner: Image built and tagged with version and 'latest'
+    deactivate S5
+
+    Runner->>S6: Execute step
+    activate S6
+    S6-->>Runner: Test container created and removed
+    deactivate S6
+
+    Runner->>S7: Execute step (if all previous successful)
+    activate S7
+    S7-->>Runner: Images (versioned, latest, rollback) uploaded to DigitalOcean
+    deactivate S7
 ```
 
+### 🧠 4. Detailed Algorithm
 
-## Usage Example
+Below is a step-by-step description of the process that the Action performs:
 
-### 1) Example 1: Default Configuration
+### Set environment variables
+- Extracts the branch name from the GITHUB_REF variable and stores it in BRANCH_NAME.
+- Reads the branch-environment-map input and uses jq to find the value associated with BRANCH_NAME, storing it in TAG_ENVIRONMENT_DOCKER.
+- Condition: If there's no match for the branch, the script fails with error code 1.
+- Exports BRANCH_NAME and TAG_ENVIRONMENT_DOCKER to the GitHub environment ($GITHUB_ENV).
 
-Uses the default configuration with branch-environment-map and dockerfile-path. Ideal for users who want a quick setup without customizations.
+### Debug Environment Variables
+- Prints the values of TAG_ENVIRONMENT_DOCKER and BRANCH_NAME for debugging.
 
-```
-name: CI
+### Login to DigitalOcean Container Registry
+- Executes docker login for the registry.digitalocean.com host.
+- Uses the provided digitalocean-token as password through stdin for secure authentication.
 
+### Set Docker image version
+- Generates a UTC timestamp in YYYYMMDDTHHMMSSZ format and stores it in the DATE_UTC variable.
+- Exports this value as the VERSION variable to the GitHub environment.
+
+### Debug Docker Version
+- Prints the VERSION value for debugging.
+
+### Pull existing images from DigitalOcean
+- Attempts to download the latest image for the current environment (e.g., registry.digitalocean.com/my-repo:prod-latest).
+- Success Condition: If the image is downloaded:
+  - Re-tags it with the -rollback suffix (e.g., registry.digitalocean.com/my-repo:prod-rollback).
+  - Uploads this new rollback image to the DigitalOcean registry.
+- Failure Condition: If no latest image exists, displays a message and continues.
+
+### Build Docker image for DigitalOcean
+- Builds the complete image name (IMAGE_NAME) using the registry endpoint, repository, environment tag, and version.
+- Exports IMAGE_NAME to the GitHub environment.
+- Executes docker build using the Dockerfile from dockerfile-path.
+- Tags the newly built image with the complete IMAGE_NAME.
+- Additionally, tags it as -latest for the current environment.
+
+### Debug Build Info
+- Prints the IMAGE_NAME and lists all local Docker images.
+
+### Run Docker container to test for DigitalOcean
+- Starts a test container (test_container) in the background from the newly created image ($IMAGE_NAME).
+- Lists the containers to verify their status and removes it immediately.
+
+### Push Docker image to DigitalOcean
+- Condition: This step only executes if all previous ones were successful (if: success()).
+- Uploads the image with the unique version tag ($IMAGE_NAME).
+- Uploads the image with the -latest environment tag.
+- Condition: If an image with the -rollback tag exists locally, it's also uploaded.
+
+### Debug Info
+- Prints the IMAGE_NAME and lists local images.
+- Performs a second docker login to DigitalOcean and re-uploads the latest and versioned images as a final verification measure.
+
+## 🚀 5. Usage Examples
+
+Here are example configurations for different scenarios.
+
+### Example 1: Production Deployment from main Branch
+
+This example shows how to configure a workflow that builds and publishes an image to the production environment (prod) when pushing to the main branch.
+
+#### Workflow Configuration
+```yaml
+name: Deploy to Production
 on:
   push:
     branches:
       - main
-      - development
-      - staging
-      - testing
-  pull_request:
-    branches:
-      - main
-      - development
-      - staging
-      - testing
-
 jobs:
-  push-digital-ocean:
+  build-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Run Push to DigitalOcean Action
+      - name: Push to DigitalOcean Registry
         uses: ronihdzz/push-to-digitalocean-action@v2
         with:
           digitalocean-token: ${{ secrets.DIGITALOCEAN_TOKEN }}
-          digitalocean-repository: ${{ vars.DIGITALOCEAN_REPOSITORY }}
+          digitalocean-repository: ${{ secrets.DO_REGISTRY_REPOSITORY }}
 ```
 
+#### Behavior Explanation
+- **Trigger**: The workflow runs on each push to the main branch.
 
-### 2) Example 2: Custom Branch-Environment Map
+- **Used Inputs**:
+  - `digitalocean-token`: Obtained from repository secrets for secure authentication.
+  - `digitalocean-repository`: Obtained from DO_REGISTRY_REPOSITORY secret to avoid exposing the registry name.
+  - `branch-environment-map` and `dockerfile-path`: Using default values, so the main branch maps to prod and uses the Dockerfile at deployments/Dockerfile.deploy.
 
-Customizes the mapping of branches to environments. Useful when branch names do not follow the default names.
+- **Result**: The Action will build an image and publish it to the specified DigitalOcean registry. Tags will be created: prod-latest, prod-YYYYMMDDTHHMMSSZ, and if applicable, prod-rollback.
 
-```
-name: CI
+### Example 2: Staging Deployment with Custom Dockerfile and Branch Map
 
+In this scenario, we want to deploy to a staging environment from a release-candidate branch. Additionally, we'll use a specific Dockerfile for this environment.
+
+#### Workflow Configuration
+```yaml
+name: Deploy to Staging
 on:
   push:
     branches:
-      - main
-      - dev
-      - stage
-      - test
-  pull_request:
-    branches:
-      - main
-      - dev
-      - stage
-      - test
-
+      - release-candidate
 jobs:
-  push-digital-ocean:
+  build-and-push-staging:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Run Push to DigitalOcean Action
+      - name: Push to DigitalOcean Registry (Staging)
         uses: ronihdzz/push-to-digitalocean-action@v2
         with:
           digitalocean-token: ${{ secrets.DIGITALOCEAN_TOKEN }}
-          digitalocean-repository: ${{ vars.DIGITALOCEAN_REPOSITORY }}
-          branch-environment-map: '{"main": "prod", "dev": "development", "stage": "staging", "test": "testing"}'
+          digitalocean-repository: ${{ secrets.DO_REGISTRY_REPOSITORY }}
+          dockerfile-path: 'build/staging/Dockerfile'
+          branch-environment-map: '{"release-candidate": "stg"}'
 ```
 
-### 3) Example 3: Custom Dockerfile Path
+#### Behavior Explanation
+- **Trigger**: The workflow runs on each push to the release-candidate branch.
 
-Uses a custom path for the Dockerfile. Useful if the deployment Dockerfile is not in the default location.
+- **Used Inputs**:
+  - `dockerfile-path`: Default value is overridden to point to build/staging/Dockerfile.
+  - `branch-environment-map`: A custom JSON is provided to map the release-candidate branch to the stg environment.
 
-```
-name: CI
-
-on:
-  push:
-    branches:
-      - main
-      - development
-      - staging
-      - testing
-  pull_request:
-    branches:
-      - main
-      - development
-      - staging
-      - testing
-
-jobs:
-  push-digital-ocean:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Run Push to DigitalOcean Action
-        uses: ronihdzz/push-to-digitalocean-action@v2
-        with:
-          digitalocean-token: ${{ secrets.DIGITALOCEAN_TOKEN }}
-          digitalocean-repository: ${{ vars.DIGITALOCEAN_REPOSITORY }}
-          dockerfile-path: "custom/path/to/Dockerfile"
-```
-
-### 4) Example 4: Custom Branch-Environment Map and Dockerfile Path
-
-Combines a custom branch-environment map and a custom Dockerfile path. Provides maximum flexibility for advanced configurations.
-
-```
-name: CI
-
-on:
-  push:
-    branches:
-      - production
-      - develop
-      - stage
-  pull_request:
-    branches:
-      - production
-      - develop
-      - stage
-
-jobs:
-  push-digital-ocean:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Run Push to DigitalOcean Action
-        uses: ronihdzz/push-to-digitalocean-action@v2
-        with:
-          digitalocean-token: ${{ secrets.DIGITALOCEAN_TOKEN }}
-          digitalocean-repository: ${{ vars.DIGITALOCEAN_REPOSITORY }}
-          branch-environment-map: '{"production": "prod", "develop": "dev", "stage": "stg"}'
-          dockerfile-path: "custom/path/to/Dockerfile"
-```
-
-
-## Notes
-* Ensure you add `DIGITALOCEAN_TOKEN` as a secret in your GitHub repository settings.
-* Ensure you add `DIGITALOCEAN_REPOSITORY` as a variable in your GitHub repository settings.
-* If you want to use a custom branch-environment-map, provide it as a JSON-formatted string. The default is `{"main": "prod", "development": "dev", "staging": "stg", "testing": "tst"}`.
-* If you want to use a custom dockerfile-path, provide it as an input. The default path is `deployments/Dockerfile.deploy`.
+- **Result**: The Action will use the staging Dockerfile and custom branch map. The image will be published to the DigitalOcean registry with tags: stg-latest, stg-YYYYMMDDTHHMMSSZ, and potentially stg-rollback.
